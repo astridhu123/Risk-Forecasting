@@ -1,0 +1,90 @@
+---
+title: "Forecast Market Risk"
+output: pdf_document
+urlcolor: blue
+geometry: margin=0.75in
+---
+
+Install and load required packages
+```{r, message=FALSE}
+if (!require("quantmod")) install.packages("quantmod") 
+if (!require("ggplot2")) install.packages("ggplot2") 
+if (!require("rugarch")) install.packages("rugarch") 
+if (!require("rmgarch")) install.packages("rmgarch") 
+if (!require("timetk")) install.packages("timetk")
+if (!require("xts")) install.packages("xts")
+if (!require("forecast")) install.packages("forecast")
+
+
+library(quantmod) # functions: getSymbols
+library(ggplot2)  # functions: ggplot
+library(rugarch)  # functions: ugarchspec
+library(rmgarch)  # functions: dccspec, dccfit, dccforecast
+library(timetk)   # functions: tk_index, tk_make_future_timeseries
+library(xts)      # functions: xts
+library(forecast) # functions: auto.arima
+library(timeDate)
+
+```
+
+# 1. Data
+
+Data: NASDAQ index ([Source](https://finance.yahoo.com/quote/%5EIXIC?p=^IXIC&.tsrc=fin-srch), for plots see file "9a. Volatility 1"
+```{r, message=FALSE, warning=FALSE}
+IXIC <- getSymbols("^IXIC", src="yahoo", return.class="xts", from="2010-01-01", auto.assign=F)
+NASDAQ <- IXIC$IXIC.Close
+colnames(NASDAQ) <- "NASDAQ"
+NASDAQ_r <- na.omit(diff(log(NASDAQ)))
+```
+
+# 2. ARMA(1,1)-GARCH(1,1) model specification
+```{r}
+model <- ugarchspec(variance.model = list(model="sGARCH", garchOrder=c(1, 1)), 
+                   mean.model = list(armaOrder=c(1, 1)))
+model
+```
+
+Estimate the model
+```{r}
+model_fit <- ugarchfit(spec=model, data=NASDAQ_r)
+```
+Forecast
+```{r}
+n.future <- 8
+model_forecast <- ugarchforecast(fit=model_fit, n.ahead=n.future)
+id <- tk_index(NASDAQ_r)
+id.f <- tk_make_future_timeseries(id, length_out=n.future, inspect_weekdays=TRUE)
+
+```
+
+# 3. VaR at $\alpha = 1\%$ for a $50,000 position in NASDAQ
+```{r, fig.width=7, fig.height=3}
+f_mean <- as.numeric(model_forecast@forecast$seriesFor)
+f_std <- as.numeric(model_forecast@forecast$sigmaFor)
+VaR_f <- 5e04*abs(f_mean-2.33*f_std)
+VaR_f <- xts(VaR_f, order.by=id.f)
+colnames(VaR_f) <- "VaR"
+
+ggplot(data=VaR_f, aes(x=index(VaR_f), y=VaR)) + 
+  geom_line(color="deeppink4") + 
+  geom_point(color="deeppink4") +
+  labs(x="Date", y="", title="Forecast of Value at Risk for a $50,000 position in NASDAQ") +
+  theme_minimal() + scale_x_date(date_breaks="1 day", date_labels = "%b %d") +
+  theme(plot.title = element_text(size=10)) 
+```
+
+# 4. Expected Shortfall at $\alpha=1\%$ for a $50,000 position in NASDAQ
+```{r, fig.width=7, fig.height=3}
+ES <- 5e04*abs(f_mean-2.64*f_std)
+ES <- xts(ES, order.by=id.f)
+colnames(ES) <- "es"
+
+ggplot(data=ES, aes(x=index(ES), y=es)) + 
+  geom_line(color="springgreen4") + 
+  geom_point(color="springgreen4") +
+  labs(x="Date", y="", title="Expected Shortfall for a $50,000 position in NASDAQ") +
+  theme_minimal() + scale_x_date(date_breaks= "1 day", date_labels = "%b %d") +
+  theme(plot.title = element_text(size=10))
+  
+```
+
